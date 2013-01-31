@@ -14,13 +14,16 @@
 (def uuid (atom 0))
 (defn next-uuid [] (swap! uuid inc))
 
-(def board-size [1000 1000])
+(def board-size [50 50])
 
 (declare make-snake)
 
+(defn random-pos []
+  (map (comp int rand) board-size))
+
 (defn add-player [player game]
   (let [uid (next-uuid)
-        snake (make-snake (map (comp int rand) board-size) uid)]
+        snake (make-snake (random-pos) uid)]
     [(assoc player :uid uid :state :in-game)
      (assoc-in game [:objects uid] snake)]))
 
@@ -60,6 +63,9 @@
 (defn green [s]
   (str ansi/green s ansi/reset))
 
+(defn red [s]
+  (str ansi/red s ansi/reset))
+
 (defmethod render :welcome [player game]
   (clear)
   (print "\n\r")
@@ -93,6 +99,12 @@
    :blocks (take 3 (iterate #(move % right) position))
    :direction left})
 
+(defn make-apple [position id]
+  {:uid id
+   :is #{:renderable}
+   :type :apple
+   :blocks [position]})
+
 (defn make-viewport [[c r] [cols rows]]
   {:position [(- c (quot cols 2)) (- r (quot rows 2))]
    :rows rows
@@ -122,6 +134,9 @@
 (defmethod render-object :snake [viewport {:keys [blocks]}]
   (reduce #(vput %1 %2 (green "O")) viewport blocks))
 
+(defmethod render-object :apple [viewport {:keys [blocks]}]
+  (reduce #(vput %1 %2 (red "@")) viewport blocks))
+
 (defmulti move-object (fn [o] (:type o)))
 
 (defmethod move-object :snake [{:keys [blocks direction] :as snake}]
@@ -150,7 +165,11 @@
     (clear)
     (print (stringify-viewport viewport))))
 
-(def game (atom {:objects {}}))
+(defn add-apples [{:keys [objects] :as game} n]
+  (let [apples (take n (repeatedly #(make-apple (random-pos) (next-uuid))))]
+    (assoc game :objects (into objects (map #(vector (:uid %) %) apples)))))
+
+(def game (atom (add-apples {:objects {}} 40)))
 
 (defn game-handler [term]
   (let [player (atom {:name "" :state :welcome :screen-size (:size @term)})]
@@ -169,5 +188,5 @@
           (recur))))))
 
 (defn -main [& args]
-  (.start (Thread. #(do (swap! game move-objects) (Thread/sleep 500) (recur))))
+  (.start (Thread. #(do (swap! game move-objects) (Thread/sleep 200) (recur))))
   (telnet/start-telnet-server 6666 game-handler))
