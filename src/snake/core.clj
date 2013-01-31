@@ -11,16 +11,20 @@
 
 (def logo (fix-newlines (slurp "src/logo.txt")))
 
-(defmulti process-input (fn [player c] (:state player)))
+(defmulti process-input (fn [player game c] (:state player)))
 
-(defmethod process-input :welcome [player c]
+(defmethod process-input :welcome [player game c]
   (cond
-    (= \return c) (assoc player :state :bye)
-    (re-find #"[\w-+\.]" (str c)) (assoc player :name (str (:name player) c))
-    :else player))
+    (= \return c)                 [(assoc player :state :in-game) game]
+    (= (char 13) c)               [(assoc player :state :bye) game]
+    (re-find #"[\w-+\.]" (str c)) [(assoc player :name (str (:name player) c)) game]
+    :else                         [player game]))
 
-(defmethod process-input :bye [player c]
-  player)
+(defmethod process-input :in-game [player game c]
+  [player game])
+
+(defmethod process-input :bye [player game c]
+  [player game])
 
 (defmulti render (fn [player game] (:state player)))
 
@@ -37,17 +41,28 @@
   (print "> ")
   (print (:name player)))
 
+(defmethod render :in-game [player game]
+  (clear)
+  (print "in game\n\r"))
+
 (defmethod render :bye [player game]
   (clear)
   (print (str "Bye, " (:name player) "!\n\r")))
+
+(defn apply-input [player game input]
+  (reduce (fn [[player game] c] (process-input player game c)) [player game] input))
+
+(def game (atom {:players [] :objects []}))
 
 (defn game-handler [term]
   (let [player (atom {:name "" :state :welcome})]
     (binding [*out* (io/writer (:out @term))]
       (loop [] 
         (dosync 
-          (let [input (map char (:input @term))]
-            (reset! player (reduce process-input @player input)) 
+          (let [input (map char (:input @term))
+                [new-player new-game] (apply-input @player @game input)]
+            (reset! player new-player) 
+            (reset! game new-game)
             (swap! term assoc :input [])))
         (render @player nil)
         (flush)
