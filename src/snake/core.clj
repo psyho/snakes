@@ -33,8 +33,13 @@
     (re-find #"[\w-+\.]" (str c)) [(assoc player :name (str (:name player) c)) game]
     :else                         [player game]))
 
+(defn opposite? [[x y] [a b]]
+  (or (= x a) (= y b)))
+
 (defn change-direction [{:keys [uid] :as player} game dir]
-  [player (assoc-in game [:objects uid :direction] dir)])
+  (if (opposite? dir (get-in game [:objects uid :direction]))
+    [player game]
+    [player (assoc-in game [:objects uid :direction] dir)]))
 
 (declare up down left right)
 
@@ -145,7 +150,7 @@
     (clear)
     (print (stringify-viewport viewport))))
 
-(def game (atom {:players [] :objects {}}))
+(def game (atom {:objects {}}))
 
 (defn game-handler [term]
   (let [player (atom {:name "" :state :welcome :screen-size (:size @term)})]
@@ -156,7 +161,6 @@
                 [new-player new-game] (apply-input @player @game input)]
             (reset! player new-player) 
             (reset! game new-game)
-            (swap! game move-objects)
             (swap! term assoc :input [])))
         (render @player @game)
         (flush)
@@ -165,4 +169,5 @@
           (recur))))))
 
 (defn -main [& args]
+  (.start (Thread. #(do (swap! game move-objects) (Thread/sleep 500) (recur))))
   (telnet/start-telnet-server 6666 game-handler))
