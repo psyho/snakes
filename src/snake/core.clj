@@ -1,6 +1,7 @@
 (ns snake.core
   (require telnet 
            ansi
+           [clojure.set :as sets]
            [clojure.java.io :as io]))
 
 (defn clear []
@@ -14,7 +15,7 @@
 (def uuid (atom 0))
 (defn next-uuid [] (swap! uuid inc))
 
-(def board-size [50 50])
+(def board-size [100 100])
 
 (declare make-snake)
 
@@ -95,13 +96,13 @@
 (defn make-snake [position id]
   {:uid id
    :type :snake
-   :is #{:movable :renderable}
+   :is #{:movable :renderable :collidable}
    :blocks (take 3 (iterate #(move % right) position))
    :direction left})
 
 (defn make-apple [position id]
   {:uid id
-   :is #{:renderable}
+   :is #{:renderable :collidable}
    :type :apple
    :blocks [position]})
 
@@ -169,7 +170,44 @@
   (let [apples (take n (repeatedly #(make-apple (random-pos) (next-uuid))))]
     (assoc game :objects (into objects (map #(vector (:uid %) %) apples)))))
 
-(def game (atom (add-apples {:objects {}} 40)))
+(defmulti collide (fn [a b] [(:type a) (:type b)]))
+
+(defn shorten-snake [{:keys [blocks] :as snake}]
+  (assoc snake :blocks (take 3 blocks)))
+
+(defn lenghten-snake [{:keys [blocks] :as snake}]
+  (let [last-block (last blocks)
+        new-blocks (:blocks (move-object snake))]
+    (assoc snake :blocks (concat new-blocks [last-block]))))
+
+(defn disappear-apple [apple]
+  (assoc apple :is #{}))
+
+(defmethod collide [:snake :snake] [a b]
+  (map shorten-snake [a b]))
+
+(defmethod collide [:apple :apple] [a b]
+  (map disappear-apple [a b]))
+
+(defmethod collide [:snake :apple] [snake apple]
+  [(lenghten-snake snake) (disappear-apple apple)])
+
+(defmethod collide [:apple :snake] [apple snake]
+  [(disappear-apple apple) (lenghten-snake snake)])
+
+(defn colliding? [a b]
+  (seq (sets/intersection (set (:blocks a)) (set (:blocks b)))))
+
+(defn collide-objects [{:keys [objects] :as game}]
+  (let [collidable (get-objects game :collidable)
+        after-collisions (apply concat 
+                                (for [x collidable 
+                                      y collidable
+                                      :when (and (not= x y) (colliding? x y))]
+                                  (collide x y)))]
+    (assoc game :objects (into objects (map #(vector (:uid %) %) after-collisions)))))
+
+(def game (atom (add-apples {:objects {}} 100)))
 
 (defn game-handler [term]
   (let [player (atom {:name "" :state :welcome :screen-size (:size @term)})]
@@ -187,6 +225,12 @@
           (Thread/sleep 250)
           (recur))))))
 
+(defn game-loop []
+  (swap! game move-objects) 
+  (swap! game collide-objects) 
+  (Thread/sleep 200) 
+  (recur))
+
 (defn -main [& args]
-  (.start (Thread. #(do (swap! game move-objects) (Thread/sleep 200) (recur))))
+  (.start (Thread. game-loop))
   (telnet/start-telnet-server 6666 game-handler))
