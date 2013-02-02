@@ -1,6 +1,6 @@
-(ns telnet-test
+(ns snake.test.telnet
   (use midje.sweet
-       telnet))
+       snake.telnet))
 
 (defn string-input-stream [s]
   (java.io.ByteArrayInputStream. (.getBytes s)))

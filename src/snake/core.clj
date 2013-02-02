@@ -1,8 +1,9 @@
 (ns snake.core
-  (require telnet 
-           ansi
-           [clojure.set :as sets]
-           [clojure.java.io :as io]))
+  (:require [snake.telnet :as telnet] 
+            [snake.ansi :as ansi]
+            [snake.viewport :as v]
+            [clojure.set :as sets]
+            [clojure.java.io :as io]))
 
 (defn clear []
   (print (str ansi/clear ansi/home)))
@@ -106,37 +107,16 @@
    :type :apple
    :blocks [position]})
 
-(defn make-viewport [[c r] [cols rows]]
-  {:position [(- c (quot cols 2)) (- r (quot rows 2))]
-   :rows rows
-   :cols cols
-   :chars (vec (repeat rows (vec (repeat cols \.))))})
-
-(defn in-viewport? [{:keys [rows cols position]} [c r]]
-  (let [[left top] position]
-    (cond 
-      (< c left) false
-      (< r top) false
-      (>= r (+ top rows)) false
-      (>= c (+ left cols)) false
-      :else true)))
-
-(defn vput [viewport [c r :as pos] chr]
-  (if (in-viewport? viewport pos)
-    (let [chars (:chars viewport)]
-      (assoc viewport :chars (assoc-in chars (map - [r c] (reverse (:position viewport))) chr))) 
-    viewport))
-
-(defn stringify-viewport [viewport]
-  (clojure.string/join "\n\r" (map #(apply str %) (:chars viewport))))
-
 (defmulti render-object (fn [viewport object] (:type object)))
 
+(defn- render-blocks [viewport blocks symbol]
+  (reduce (fn [viewport block] (v/vput viewport block symbol)) viewport blocks))
+
 (defmethod render-object :snake [viewport {:keys [blocks]}]
-  (reduce #(vput %1 %2 (green "O")) viewport blocks))
+  (render-blocks viewport blocks (green "O")))
 
 (defmethod render-object :apple [viewport {:keys [blocks]}]
-  (reduce #(vput %1 %2 (red "@")) viewport blocks))
+  (render-blocks viewport blocks (red "@")))
 
 (defmulti move-object (fn [o] (:type o)))
 
@@ -161,10 +141,10 @@
   (first (:blocks (get objects uid))))
 
 (defmethod render :in-game [player game]
-  (let [viewport (make-viewport (user-position player game) (:screen-size player))
+  (let [viewport (v/viewport (user-position player game) (:screen-size player))
         viewport (render-game viewport game)]
     (clear)
-    (print (stringify-viewport viewport))))
+    (print (str viewport))))
 
 (defn add-apples [{:keys [objects] :as game} n]
   (let [apples (take n (repeatedly #(make-apple (random-pos) (next-uuid))))]

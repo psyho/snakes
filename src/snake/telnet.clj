@@ -1,5 +1,5 @@
-(ns telnet
-  (require [server.socket :as tcp]))
+(ns snake.telnet
+  (:require [server.socket :as tcp]))
 
 (defn ubyte [n]
   (byte (if (> n 127) (- n 256) n)))

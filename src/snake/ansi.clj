@@ -1,4 +1,4 @@
-(ns ansi)
+(ns snake.ansi)
 
 (def e "\u001B")
 
