@@ -16,51 +16,53 @@
 (def uuid (atom 0))
 (defn next-uuid [] (swap! uuid inc))
 
-(def board-size [100 100])
-
 (declare make-snake)
 
-(defn random-pos []
+(defn random-pos [{:keys [board-size]}]
   (map (comp int rand) board-size))
 
-(defn add-player [player game]
-  (let [uid (next-uuid)
-        snake (make-snake (random-pos) uid)]
-    [(assoc player :uid uid :state :in-game)
-     (assoc-in game [:objects uid] snake)]))
+(defn add-player [game uid]
+  (let [snake (make-snake (random-pos game) uid)]
+    (-> game
+        (assoc-in [:players uid :state] :in-game)
+        (assoc-in [:objects uid] snake))))
 
-(defmulti process-input (fn [player game c] (:state player)))
+(defmulti process-input (fn [game uid c] (get-in game [:players uid :state])))
 
-(defmethod process-input :welcome [player game c]
+(defn append-to-player-name [game uid c]
+  (let [name (get-in game [:players uid :name])]
+    (assoc-in game [:players uid :name] (str name c))))
+
+(defmethod process-input :welcome [game uid c]
   (cond
-    (= \return c)                 (add-player player game)
-    (= (char 13) c)               [(assoc player :state :bye) game]
-    (re-find #"[\w-+\.]" (str c)) [(assoc player :name (str (:name player) c)) game]
-    :else                         [player game]))
+    (= \return c)                 (add-player game uid)
+    (= (char 13) c)               (assoc-in game [:players uid :state] :bye)
+    (re-find #"[\w-+\.]" (str c)) (append-to-player-name game uid c)
+    :else                         game))
 
 (defn opposite? [[x y] [a b]]
   (or (= x a) (= y b)))
 
-(defn change-direction [{:keys [uid] :as player} game dir]
+(defn change-direction [game uid dir]
   (if (opposite? dir (get-in game [:objects uid :direction]))
-    [player game]
-    [player (assoc-in game [:objects uid :direction] dir)]))
+    game
+    (assoc-in game [:objects uid :direction] dir)))
 
 (declare up down left right)
 
-(defmethod process-input :in-game [player game c]
+(defmethod process-input :in-game [game uid c]
   (case c
-    \q [(assoc player :state :bye) game]
-    \h (change-direction player game left)
-    \j (change-direction player game down)
-    \k (change-direction player game up)
-    \l (change-direction player game right)
-    [player game]))
+    \q (assoc-in game [:players uid :state] :bye)
+    \h (change-direction game uid left)
+    \j (change-direction game uid down)
+    \k (change-direction game uid up)
+    \l (change-direction game uid right)
+    game))
 
-(defmethod process-input :bye [player game c]
-  [player game])
+(defmethod process-input :bye [game uid c]
+  game)
 
-(defmulti render (fn [player game] (:state player)))
+(defmulti render (fn [game uid] (get-in game [:players uid :state])))
 
 (defn green [s]
   (str ansi/green s ansi/reset))
@@ -68,7 +70,10 @@
 (defn red [s]
   (str ansi/red s ansi/reset))
 
-(defmethod render :welcome [player game]
+(defn player-name [game uid]
+  (get-in game [:players uid :name]))
+
+(defmethod render :welcome [game uid]
   (clear)
   (print "\n\r")
   (print (green logo))
@@ -77,14 +82,14 @@
   (print "Enter your name: \n\r")
   (print "\n\r")
   (print "> ")
-  (print (:name player)))
+  (print (player-name game uid)))
 
-(defmethod render :bye [player game]
+(defmethod render :bye [game uid]
   (clear)
-  (print (str "Bye, " (:name player) "!\n\r")))
+  (print (str "Bye, " (player-name game uid) "!\n\r")))
 
-(defn apply-input [player game input]
-  (reduce (fn [[player game] c] (process-input player game c)) [player game] input))
+(defn apply-input [game uid input]
+  (reduce (fn [game c] (process-input game uid c)) game input))
 
 (def left [-1 0])
 (def right [1 0])
@@ -137,17 +142,20 @@
   (let [renderables (get-objects game :renderable)]
     (reduce render-object viewport renderables)))
 
-(defn user-position [{:keys [uid]} {:keys [objects]}]
+(defn user-position [{:keys [objects]} uid]
   (first (:blocks (get objects uid))))
 
-(defmethod render :in-game [player game]
-  (let [viewport (v/viewport (user-position player game) (:screen-size player))
+(defn screen-size [game uid]
+  (get-in game [:players uid :screen-size]))
+
+(defmethod render :in-game [game uid]
+  (let [viewport (v/viewport (user-position game uid) (screen-size game uid))
         viewport (render-game viewport game)]
     (clear)
     (print (str viewport))))
 
 (defn add-apples [{:keys [objects] :as game} n]
-  (let [apples (take n (repeatedly #(make-apple (random-pos) (next-uuid))))]
+  (let [apples (take n (repeatedly #(make-apple (random-pos game) (next-uuid))))]
     (assoc game :objects (into objects (map #(vector (:uid %) %) apples)))))
 
 (defmulti collide (fn [a b] [(:type a) (:type b)]))
@@ -187,21 +195,33 @@
                                   (collide x y)))]
     (assoc game :objects (into objects (map #(vector (:uid %) %) after-collisions)))))
 
-(def game (atom (add-apples {:objects {}} 100)))
+(defn make-game [board-size apple-count]
+  (-> {:objects {} 
+       :board-size board-size
+       :players {}}
+      (add-apples apple-count)))
+
+(defn make-player [uid screen-size]
+  {:name "" 
+   :state :welcome 
+   :screen-size screen-size
+   :uid uid})
+
+(def game (atom (make-game [100 100] 50)))
 
 (defn game-handler [term]
-  (let [player (atom {:name "" :state :welcome :screen-size (:size @term)})]
+  (let [uid (next-uuid)
+        player (make-player uid (:size @term))]
+    (swap! game assoc-in [:players uid] player)
     (binding [*out* (io/writer (:out @term))]
       (loop [] 
         (dosync 
-          (let [input (map (comp char telnet/to-unsigned) (:input @term))
-                [new-player new-game] (apply-input @player @game input)]
-            (reset! player new-player) 
-            (reset! game new-game)
+          (let [input (map (comp char telnet/to-unsigned) (:input @term))]
+            (swap! game apply-input uid input)
             (swap! term assoc :input [])))
-        (render @player @game)
+        (render @game uid)
         (flush)
-        (when (not= (:state @player) :bye) 
+        (when (not= (get-in @game [:players uid :state]) :bye) 
           (Thread/sleep 250)
           (recur))))))
 
