@@ -21,22 +21,34 @@
 (defn random-pos [{:keys [board-size]}]
   (map (comp int rand) board-size))
 
+(defn state [game uid]
+  (get-in game [:players uid :state]))
+
+(defn set-state [game uid state]
+  (assoc-in game [:players uid :state] state))
+
+(defn add-objects [game objects]
+  (let [old-objects (:objects game)
+        with-uids (map #(vector (:uid %) %) objects)]
+    (assoc game :objects (into old-objects with-uids))))
+
 (defn add-player [game uid]
   (let [snake (make-snake (random-pos game) uid)]
     (-> game
-        (assoc-in [:players uid :state] :in-game)
-        (assoc-in [:objects uid] snake))))
+        (set-state uid :in-game)
+        (add-objects [snake]))))
 
-(defmulti process-input (fn [game uid c] (get-in game [:players uid :state])))
+(defn player-name [game uid]
+  (get-in game [:players uid :name]))
+
+(defmulti process-input (fn [game uid c] (state game uid)))
 
 (defn append-to-player-name [game uid c]
-  (let [name (get-in game [:players uid :name])]
-    (assoc-in game [:players uid :name] (str name c))))
+  (assoc-in game [:players uid :name] (str (player-name game uid) c)))
 
 (defmethod process-input :welcome [game uid c]
   (cond
     (= \return c)                 (add-player game uid)
-    (= (char 13) c)               (assoc-in game [:players uid :state] :bye)
     (re-find #"[\w-+\.]" (str c)) (append-to-player-name game uid c)
     :else                         game))
 
@@ -52,7 +64,7 @@
 
 (defmethod process-input :in-game [game uid c]
   (case c
-    \q (assoc-in game [:players uid :state] :bye)
+    \q (set-state game uid :bye)
     \h (change-direction game uid left)
     \j (change-direction game uid down)
     \k (change-direction game uid up)
@@ -62,16 +74,13 @@
 (defmethod process-input :bye [game uid c]
   game)
 
-(defmulti render (fn [game uid] (get-in game [:players uid :state])))
+(defmulti render state)
 
 (defn green [s]
   (str ansi/green s ansi/reset))
 
 (defn red [s]
   (str ansi/red s ansi/reset))
-
-(defn player-name [game uid]
-  (get-in game [:players uid :name]))
 
 (defmethod render :welcome [game uid]
   (clear)
@@ -135,8 +144,8 @@
 
 (defn move-objects [{:keys [objects] :as game}]
   (let [movable (get-objects game :movable)
-        objects (into objects (map #(vector (:uid %) (move-object %)) movable))]
-    (assoc game :objects objects)))
+        moved (map move-object movable)]
+    (add-objects game moved)))
 
 (defn render-game [viewport game]
   (let [renderables (get-objects game :renderable)]
@@ -156,7 +165,7 @@
 
 (defn add-apples [{:keys [objects] :as game} n]
   (let [apples (take n (repeatedly #(make-apple (random-pos game) (next-uuid))))]
-    (assoc game :objects (into objects (map #(vector (:uid %) %) apples)))))
+    (add-objects game apples)))
 
 (defmulti collide (fn [a b] [(:type a) (:type b)]))
 
@@ -193,7 +202,7 @@
                                       y collidable
                                       :when (and (not= x y) (colliding? x y))]
                                   (collide x y)))]
-    (assoc game :objects (into objects (map #(vector (:uid %) %) after-collisions)))))
+    (add-objects game after-collisions)))
 
 (defn make-game [board-size apple-count]
   (-> {:objects {} 
@@ -221,7 +230,7 @@
             (swap! term assoc :input [])))
         (render @game uid)
         (flush)
-        (when (not= (get-in @game [:players uid :state]) :bye) 
+        (when (not= (state @game uid) :bye) 
           (Thread/sleep 250)
           (recur))))))
 
